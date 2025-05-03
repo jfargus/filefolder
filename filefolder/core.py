@@ -6,6 +6,7 @@ import datefinder
 from hashlib import sha256
 import platform
 import pandas as pd
+import re
 
 try:
     import pwd
@@ -73,12 +74,28 @@ class File:
             except Exception as e:
                 metadata["owner"] = f"Unknown (Unix): {e}"
         return metadata
+    
+    def extract_date_strings(self, text):
+        # Find any sequences that look like numbers separated by allowed delimiters
+        rough_matches = re.findall(r"(\d{1,4}[./\-\s]\d{1,2}[./\-\s]\d{1,4})", text)
+        clean_dates = []
+
+        for match in rough_matches:
+            parts = re.split(r"[./\-\s]", match)
+            if len(parts) >= 3:
+                # Rebuild date from only the first three components
+                clean_date = f"{parts[0]}.{parts[1]}.{parts[2]}"
+                clean_dates.append(clean_date)
+
+        return clean_dates
 
     @property
     def datestamp(self):
         if not self._datestamp:
             filename = self.file.name
-            matches = list(datefinder.find_dates(filename))
+            filename_clean = self.extract_date_strings(filename)
+            filename_clean = filename_clean[0] if filename_clean else filename
+            matches = list(datefinder.find_dates(filename_clean))
             self._datestamp = datetime(2000, 1, 1) if not matches else matches[0]
         return self._datestamp
 
