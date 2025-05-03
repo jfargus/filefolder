@@ -138,8 +138,8 @@ class Folder:
         rows = []
         for f in self.files:
             file_data = asdict(f)
-            file_data["file.hash"] = f.hash if include_calulated_fields else None
-            file_data["file.datestamp"] = f.datestamp if include_calulated_fields else None
+            file_data["hash"] = f.hash if include_calulated_fields else None
+            file_data["datestamp"] = f.datestamp if include_calulated_fields else None
             file_prefixed = {f"file.{k}": v for k, v in file_data.items()}
             row = {**file_prefixed, **folder_prefixed}
             rows.append(row)
