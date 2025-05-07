@@ -1,5 +1,5 @@
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from shutil import copy2, move
 from datetime import datetime
 import datefinder
@@ -18,6 +18,7 @@ except ImportError:
 @dataclass
 class File:
     file_path: str
+    with_calculated: bool = field(default=False)
     file: Path = field(init=False)
     file_name: str = field(init=False)
     file_extension: str = field(init=False)
@@ -30,6 +31,9 @@ class File:
         self.file_name = self.file.stem
         self.file_extension = self.file.suffix[1:]
         self.metadata = self.get_file_metadata()
+        if self.with_calculated:
+            self._hash = self.hash
+            self._datestamp = self.datestamp
 
     def move(self, target_path):
         if not self.file.exists():
@@ -118,27 +122,31 @@ class Folder:
         self.folder = Path(self.folder_path)
         self.folder_name = self.folder.name
 
-    def get_contents(self):
+    def get_contents(self, with_calculated=False, recursive=False, progress_bar=True):
         """
-        Return a list of all immediate subfolders in the given folder, with progress bar.
+        Return a list of all immediate subfolders in the given folder.
         Uses os.scandir() for performance on network drives.
+        Optionally shows a progress bar.
         """
         folder_path = self.folder
         subfolders = []
 
         try:
             with os.scandir(folder_path) as entries:
-                entries = list(entries)  # Materialize for tqdm
-                for entry in tqdm(entries, desc="Scanning files for folders..."):
+                entries = list(entries)
+
+                iterator = tqdm(entries, desc="Scanning files for folders...") if progress_bar else entries
+
+                for entry in iterator:
                     if entry.is_dir(follow_symlinks=False):
                         subfolders.append(Folder(str(entry.path)))
         except Exception:
             pass  # Optional: log or raise
 
         self.folders = subfolders
-        self.get_files(recursive=False)
+        self.get_files(recursive=recursive, with_calculated=with_calculated)
 
-    def get_files(self, recursive=False):
+    def get_files(self, recursive=False, with_calculated=False):
         """
         Return a list of File objects from the folder, optionally recursive.
         Streams file paths as they're discovered via scandir.
@@ -149,12 +157,12 @@ class Folder:
 
             if recursive:
                 for path in self._scandir_recursive(folder):
-                    file_objs.append(File(str(path)))
+                    file_objs.append(File(str(path), with_calculated=with_calculated))
             else:
                 with os.scandir(folder) as entries:
                     for entry in entries:
                         if entry.is_file(follow_symlinks=False):
-                            file_objs.append(File(str(entry.path)))
+                            file_objs.append(File(str(entry.path), with_calculated=with_calculated))
 
             self.files = file_objs
             return file_objs
