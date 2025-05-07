@@ -1,12 +1,13 @@
 from pathlib import Path
-from dataclasses import dataclass, field, asdict, is_dataclass
+from dataclasses import dataclass, field
 from shutil import copy2, move
 from datetime import datetime
 import datefinder
 from hashlib import sha256
 import platform
-import pandas as pd
 import re
+from tqdm import tqdm
+import os
 
 try:
     import pwd
@@ -21,7 +22,6 @@ class File:
     file_name: str = field(init=False)
     file_extension: str = field(init=False)
     metadata: dict = field(init=False)
-    system_path: str = field(init=False)
     _hash: str = field(init=False, default=None)
     _datestamp: datetime = field(init=False, default=None)
 
@@ -30,7 +30,6 @@ class File:
         self.file_name = self.file.stem
         self.file_extension = self.file.suffix[1:]
         self.metadata = self.get_file_metadata()
-        self.system_path = str(self.file.resolve())
 
     def move(self, target_path):
         if not self.file.exists():
@@ -110,55 +109,74 @@ class File:
 @dataclass
 class Folder:
     folder_path: str
-    recursive: bool = False
     folder: Path = field(init=False)
     folder_name: str = field(init=False)
     folders: list = field(default_factory=list)
     files: list = field(default_factory=list)
-    system_path: str = field(init=False)
 
     def __post_init__(self):
         self.folder = Path(self.folder_path)
-        self.folders = self.get_folders_in_folder()
-        self.files = self.get_files_in_folder()
         self.folder_name = self.folder.name
-        self.system_path = str(self.folder.resolve())
 
-    def get_folders_in_folder(self):
-        folder = self.folder
-        return [Folder(str(f)) for f in folder.iterdir() if f.is_dir()]
+    def get_contents(self):
+        """
+        Return a list of all immediate subfolders in the given folder, with progress bar.
+        Uses os.scandir() for performance on network drives.
+        """
+        folder_path = self.folder
+        subfolders = []
 
-    def get_files_in_folder(self):
+        try:
+            with os.scandir(folder_path) as entries:
+                entries = list(entries)  # Materialize for tqdm
+                for entry in tqdm(entries, desc="Scanning files for folders..."):
+                    if entry.is_dir(follow_symlinks=False):
+                        subfolders.append(Folder(str(entry.path)))
+        except Exception:
+            pass  # Optional: log or raise
+
+        self.folders = subfolders
+        self.get_files(recursive=False)
+
+    def get_files(self, recursive=False):
+        """
+        Return a list of File objects from the folder, optionally recursive.
+        Streams file paths as they're discovered via scandir.
+        """
         try:
             folder = self.folder
-            if self.recursive:
-                return [File(str(f)) for f in folder.rglob("*") if f.is_file()]
+            file_objs = []
+
+            if recursive:
+                for path in self._scandir_recursive(folder):
+                    file_objs.append(File(str(path)))
             else:
-                return [File(str(f)) for f in folder.iterdir() if f.is_file()]
+                with os.scandir(folder) as entries:
+                    for entry in entries:
+                        if entry.is_file(follow_symlinks=False):
+                            file_objs.append(File(str(entry.path)))
+
+            self.files = file_objs
+            return file_objs
+
         except Exception:
             return []
+    
+    def _scandir_recursive(self, path):
+        """
+        Generator: Recursively yield Path objects for all files under the given directory using os.scandir().
+        """
+        stack = [Path(path)]
 
-    def to_pandas(self, include_calulated_fields=False):
-        import pandas as pd
-        from dataclasses import asdict
-
-        if not self.files:
-            return pd.DataFrame()
-
-        folder_data = asdict(self)
-        folder_data.pop("files", None)
-        folder_data.pop("folders", None)
-
-        folder_prefixed = {f"folder.{k}": v for k, v in folder_data.items()}
-        folder_prefixed["folder.folders"] = [f.folder_name for f in self.folders]
-
-        rows = []
-        for f in self.files:
-            file_data = asdict(f)
-            file_data["hash"] = f.hash if include_calulated_fields else None
-            file_data["datestamp"] = f.datestamp if include_calulated_fields else None
-            file_prefixed = {f"file.{k}": v for k, v in file_data.items()}
-            row = {**file_prefixed, **folder_prefixed}
-            rows.append(row)
-
-        return pd.json_normalize(rows, sep=".")
+        while stack:
+            current = stack.pop()
+            try:
+                with os.scandir(current) as it:
+                    for entry in it:
+                        entry_path = Path(entry.path)
+                        if entry.is_file(follow_symlinks=False):
+                            yield entry_path
+                        elif entry.is_dir(follow_symlinks=False):
+                            stack.append(entry_path)
+            except Exception:
+                continue  # Optionally log or handle inaccessible directories

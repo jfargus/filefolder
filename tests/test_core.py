@@ -18,16 +18,3 @@ def test_file_metadata_and_hash():
     assert isinstance(f.datestamp.year, int)
 
     os.remove(temp_path)
-
-def test_folder_to_pandas():
-    with tempfile.TemporaryDirectory() as tempdir:
-        file_path = Path(tempdir) / "test.txt"
-        file_path.write_text("abc123")
-
-        folder = Folder(str(tempdir))
-        df = folder.to_pandas(include_calulated_fields=True)
-
-        assert not df.empty
-        assert "file.file_name" in df.columns
-        assert "file.hash" in df.columns
-        assert "folder.folder_name" in df.columns
